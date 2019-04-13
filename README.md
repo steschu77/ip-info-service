@@ -15,7 +15,7 @@ Services include:
 ## How to Use
 
 ```
-> g++ -o httpd httpd.cpp
+> g++ -std=c++11 -o httpd httpd.cpp
 > ./httpd
 Server started http://127.0.0.1:8000
 
