@@ -1,39 +1,37 @@
 #include <string.h>
 #include <stdio.h>
 #include <unistd.h>
+
 #include <sys/socket.h>
 #include <netdb.h>
 
-typedef struct { char *name, *value; } header_t;
-static header_t reqhdr[17] = { 0 };
+#include <time.h>
 
-char *request_header(const char *name)
+// ----------------------------------------------------------------------------
+long long getUTCTimeInMS()
 {
-  for (header_t *h = reqhdr; h->name != nullptr; h++)
-  {
-    if (strcmp(h->name, name) == 0) {
-      return h->value;
-    }
-  }
-  return nullptr;
+  struct timespec spec;
+  clock_gettime(CLOCK_REALTIME, &spec);
+  return spec.tv_sec * 1000 + spec.tv_nsec / 1000000;
 }
 
-void print(int clientfd, const char* msg)
+// ----------------------------------------------------------------------------
+void appHandleGetReq(int clientfd, const char* uri)
 {
-  const size_t cmsg = strlen(msg);
-  write(clientfd, msg, cmsg);
-}
-
-void route(int clientfd, const char* uri)
-{
+  FILE* f = fdopen(clientfd, "w");
+  
   if (strcmp(uri, "/") == 0) {
-    print(clientfd, "HTTP/1.1 200 OK\r\n\r\nHello!");
-    return;
+    fprintf(f, "HTTP/1.1 200 OK\r\n\r\nHello!");
+  } else if (strcmp(uri, "/time") == 0) {
+    fprintf(f, "HTTP/1.1 200 OK\r\n\r\n");
+    fprintf(f, "%lld", getUTCTimeInMS());
+  } else {
+    fprintf(f, "HTTP/1.1 500 Internal Server Error\r\n\r\n");
   }
-  print(clientfd, "HTTP/1.1 500 Internal Server Error\r\n\r\n");
-  print(clientfd, "The server has no idea what you want.");
+  fclose(f);
 }
 
+// ----------------------------------------------------------------------------
 void respond(int clientfd)
 {
   char buf[65535];
@@ -48,35 +46,11 @@ void respond(int clientfd)
 
     char* method = strtok(buf, " \t\r\n"); // "GET" or "POST"
     char* uri = strtok(nullptr, " \t");    // "/index.html" incl. '?'
-    char* prot = strtok(nullptr, " \t\r\n");
 
     fprintf(stderr, "[%s] %s\n", method, uri);
 
-    header_t *h = reqhdr;
-    while (h < reqhdr + 16)
-    {
-      char* k = strtok(nullptr, "\r\n: \t");
-      if (k == nullptr) {
-        break;
-      }
-
-      char* v = strtok(nullptr, "\r\n");
-      while (*v && *v == ' ') {
-        v++;
-      }
-
-      h->name = k;
-      h->value = v;
-      h++;
-
-      char* t = v + 1 + strlen(v);
-      if (t[1] == '\r' && t[2] == '\n') {
-        break;
-      }
-    }
-
     if (strcmp(method, "GET") == 0) {
-      route(clientfd, uri);
+      appHandleGetReq(clientfd, uri);
     }
   }
 
@@ -84,6 +58,7 @@ void respond(int clientfd)
   close(clientfd);
 }
 
+// ----------------------------------------------------------------------------
 int startServer(const char *port)
 {
   struct addrinfo hints = { 0 }, *res = nullptr;
@@ -95,6 +70,7 @@ int startServer(const char *port)
   }
 
   int listenfd = -1;
+  int ipAddr = -1;
   for (struct addrinfo* p = res; p != nullptr; p = p->ai_next)
   {
     listenfd = socket(p->ai_family, p->ai_socktype, 0);
@@ -106,26 +82,29 @@ int startServer(const char *port)
     setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, &option, sizeof(option));
 
     if (bind(listenfd, p->ai_addr, p->ai_addrlen) == 0) {
+      ipAddr = reinterpret_cast<const sockaddr_in*>(p->ai_addr)->sin_addr.s_addr;
       break;
     }
 
     close(listenfd);
   }
 
+  freeaddrinfo(res);
+
   if (listenfd == -1) {
     return -1;
   }
-
-  freeaddrinfo(res);
 
   if (listen(listenfd, 1000000) != 0) {
     return -1;
   }
 
-  fprintf(stderr, "Server started http://127.0.0.1:%s\n", port);
+  fprintf(stderr, "Server started http://%d.%d.%d.%d:%s\n",
+    ipAddr&0xff, (ipAddr>>8)&0xff, (ipAddr>>16)&0xff, (ipAddr>>24)&0xff, port);
   return listenfd;
 }
 
+// ----------------------------------------------------------------------------
 int main(int argc, const char* argv[])
 {
   int listenfd = startServer("8000");
@@ -135,11 +114,15 @@ int main(int argc, const char* argv[])
 
   while (1)
   {
-    struct sockaddr_in clientaddr;
-    socklen_t addrlen = sizeof(clientaddr);
+    struct sockaddr_in peerAddr;
+    socklen_t peerAddrLen = sizeof(peerAddr);
 
-    int clientfd = accept(listenfd, (struct sockaddr *)&clientaddr, &addrlen);
+    int clientfd = accept(listenfd, (struct sockaddr *)&peerAddr, &peerAddrLen);
     if (clientfd >= 0) {
+      int ipAddr = peerAddr.sin_addr.s_addr;
+      fprintf(stderr, "Client connect %d.%d.%d.%d:%d\n",
+        ipAddr&0xff, (ipAddr>>8)&0xff, (ipAddr>>16)&0xff, (ipAddr>>24)&0xff,
+        peerAddr.sin_port);
       respond(clientfd);
     }
   }
