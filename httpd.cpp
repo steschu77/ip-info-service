@@ -17,7 +17,7 @@ long long getUTCTimeInMS()
 }
 
 // ----------------------------------------------------------------------------
-void appHandleGetReq(int clientfd, const char* uri)
+void appHandleGetReq(int clientfd, const char* uri, struct sockaddr_in* addr, socklen_t addrLen)
 {
   FILE* f = fdopen(clientfd, "w");
   
@@ -26,6 +26,10 @@ void appHandleGetReq(int clientfd, const char* uri)
   } else if (strcmp(uri, "/time") == 0) {
     fprintf(f, "HTTP/1.1 200 OK\r\n\r\n");
     fprintf(f, "%lld", getUTCTimeInMS());
+  } else if (strcmp(uri, "/addr") == 0) {
+    int ip = addr->sin_addr.s_addr;
+    fprintf(f, "HTTP/1.1 200 OK\r\n\r\n");
+    fprintf(f, "%d.%d.%d.%d:%d", ip&0xff, (ip>>8)&0xff, (ip>>16)&0xff, (ip>>24)&0xff, addr->sin_port);
   } else {
     fprintf(f, "HTTP/1.1 500 Internal Server Error\r\n\r\n");
   }
@@ -33,7 +37,7 @@ void appHandleGetReq(int clientfd, const char* uri)
 }
 
 // ----------------------------------------------------------------------------
-void respond(int clientfd)
+void respond(int clientfd, struct sockaddr_in* addr, socklen_t addrLen)
 {
   char buf[65535];
   int rcvd = recv(clientfd, buf, 65535, 0);
@@ -51,7 +55,7 @@ void respond(int clientfd)
     fprintf(stderr, "[%s] %s\n", method, uri);
 
     if (strcmp(method, "GET") == 0) {
-      appHandleGetReq(clientfd, uri);
+      appHandleGetReq(clientfd, uri, addr, addrLen);
     }
   }
 
@@ -124,7 +128,7 @@ int main(int argc, const char* argv[])
       fprintf(stderr, "Client connect %d.%d.%d.%d:%d\n",
         ipAddr&0xff, (ipAddr>>8)&0xff, (ipAddr>>16)&0xff, (ipAddr>>24)&0xff,
         peerAddr.sin_port);
-      respond(clientfd);
+      respond(clientfd, &peerAddr, peerAddrLen);
     }
   }
 }
